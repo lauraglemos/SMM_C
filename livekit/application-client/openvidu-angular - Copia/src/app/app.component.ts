@@ -1,5 +1,10 @@
 import { Component, HostListener, OnDestroy, signal } from '@angular/core';
 import { ReactiveFormsModule, FormControl, FormGroup, Validators } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
+import { Router } from '@angular/router';
+import { HttpClientModule } from '@angular/common/http';
+import { FormsModule } from '@angular/forms';
+import { CommonModule } from '@angular/common';
 import {
     LocalVideoTrack,
     RemoteParticipant,
@@ -8,87 +13,110 @@ import {
     Room,
     RoomEvent,
 } from 'livekit-client';
-import { VideoComponent } from './video/video.component';
-import { AudioComponent } from './audio/audio.component';
-import { AlertComponent } from './alert/alert.component';
-
-import { HttpClient } from '@angular/common/http';
 import { lastValueFrom } from 'rxjs';
-
-type TrackInfo = {
-    trackPublication: RemoteTrackPublication;
-    participantIdentity: string;
-};
-
-// When running OpenVidu locally, leave these variables empty
-// For other deployment type, configure them with correct URLs depending on your deployment
-var APPLICATION_SERVER_URL = '';
-var LIVEKIT_URL = '';
 
 @Component({
     selector: 'app-root',
     standalone: true,
-    imports: [ReactiveFormsModule, AudioComponent, VideoComponent, AlertComponent],
+    imports: [ReactiveFormsModule, HttpClientModule,  CommonModule, FormsModule],
     templateUrl: './app.component.html',
     styleUrls: ['./app.component.css'],
 })
 export class AppComponent implements OnDestroy {
     roomForm = new FormGroup({
         roomName: new FormControl('Test Room', Validators.required),
-        participantName: new FormControl('Participant' + Math.floor(Math.random() * 100), Validators.required),
+        participantName: new FormControl('', Validators.required),
     });
+
+    username: string = '';
+    password: string = '';
+    rol: string = '';
+    adminKey: string = '';
+    isMainCamera: boolean = false;
+    newUser: boolean = false;
 
     room = signal<Room | undefined>(undefined);
     localTrack = signal<LocalVideoTrack | undefined>(undefined);
-    remoteTracksMap = signal<Map<string, TrackInfo>>(new Map());
-    isMainCamera: boolean = false; 
+    remoteTracksMap = signal<Map<string, RemoteTrackPublication>>(new Map());
 
-    constructor(private httpClient: HttpClient) {
-        this.configureUrls();
+    constructor(private httpClient: HttpClient, private router: Router) {}
+
+    toggleNewUser(event: Event): void {
+        event.preventDefault();
+        this.newUser = !this.newUser;
     }
 
-    configureUrls() {
-        // If APPLICATION_SERVER_URL is not configured, use default value from OpenVidu Local deployment
-        if (!APPLICATION_SERVER_URL) {
-            if (window.location.hostname === 'localhost') {
-                APPLICATION_SERVER_URL = 'http://localhost:6080/';
-            } else {
-                APPLICATION_SERVER_URL = 'https://' + window.location.hostname + ':6443/';
-            }
+    async login(): Promise<void> {
+        if (!this.username || !this.password) {
+            alert('Por favor, completa todos los campos para iniciar sesión.');
+            return;
         }
 
-        // If LIVEKIT_URL is not configured, use default value from OpenVidu Local deployment
-        if (!LIVEKIT_URL) {
-            if (window.location.hostname === 'localhost') {
-                LIVEKIT_URL = 'ws://localhost:7880/';
+        try {
+            const response: any = await lastValueFrom(
+                this.httpClient.post('http://localhost:3000/login', { username: this.username, password: this.password })
+            );
+
+            alert('Inicio de sesión exitoso');
+
+            // Asignar el rol al usuario actual
+            this.rol = response.rol;
+
+            if (this.rol === 'administrador') {
+                this.router.navigate(['/camera']); // Redirige a cámara
+            } else if (this.rol === 'basico') {
+                this.router.navigate(['/streaming']); // Redirige a streaming
             } else {
-                LIVEKIT_URL = 'wss://' + window.location.hostname + ':7443/';
+                alert('Rol no reconocido');
             }
+        } catch (err) {
+            console.error('Error al iniciar sesión:', err);
+            alert('Usuario o contraseña incorrectos.');
         }
     }
 
-    async joinRoom() {
-        // Initialize a new Room object
+    async register(): Promise<void> {
+        if (!this.username || !this.password || !this.rol || !this.adminKey) {
+            alert('Por favor, completa todos los campos para registrar un usuario.');
+            return;
+        }
+
+        try {
+            const response: any = await lastValueFrom(
+                this.httpClient.post('http://localhost:3000/register', {
+                    username: this.username,
+                    password: this.password,
+                    adminKey: this.adminKey,
+                    rol: this.rol,
+                })
+            );
+
+            alert('Usuario registrado exitosamente');
+            this.newUser = false; // Regresar al modo de inicio de sesión
+        } catch (err) {
+            console.error('Error al registrar usuario:', err);
+            alert('No se pudo registrar el usuario. Verifica la clave de administrador o los datos ingresados.');
+        }
+    }
+
+    async joinRoom(): Promise<void> {
+        const roomName = this.roomForm.value.roomName!;
+        const participantName = this.username; // Usar el nombre de usuario como nombre del participante
+
         const room = new Room();
         this.room.set(room);
 
-        // Specify the actions when events take place in the room
-        // On every new Track received...
         room.on(
             RoomEvent.TrackSubscribed,
-            (_track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+            (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
                 this.remoteTracksMap.update((map) => {
-                    map.set(publication.trackSid, {
-                        trackPublication: publication,
-                        participantIdentity: participant.identity,
-                    });
+                    map.set(publication.trackSid, publication);
                     return map;
                 });
             }
         );
 
-        // On every new Track destroyed...
-        room.on(RoomEvent.TrackUnsubscribed, (_track: RemoteTrack, publication: RemoteTrackPublication) => {
+        room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, publication: RemoteTrackPublication) => {
             this.remoteTracksMap.update((map) => {
                 map.delete(publication.trackSid);
                 return map;
@@ -96,72 +124,39 @@ export class AppComponent implements OnDestroy {
         });
 
         try {
-            // Get the room name and participant name from the form
-            const roomName = this.roomForm.value.roomName!;
-            const participantName = this.roomForm.value.participantName!;
-
-            // Get a token from your application server with the room name and participant name
             const token = await this.getToken(roomName, participantName);
-            
-            // Connect to the room with the LiveKit URL and the token
-            await room.connect(LIVEKIT_URL, token);
+            await room.connect('ws://localhost:7880/', token);
 
-            // Configure if the participant is MainCamera
-            if (participantName === 'MainCamera') {
+            if (this.rol === 'administrador') {
                 this.isMainCamera = true;
                 await room.localParticipant.enableCameraAndMicrophone();
                 this.localTrack.set(room.localParticipant.videoTrackPublications.values().next().value.videoTrack);
             } else {
                 this.isMainCamera = false;
+                // Usuarios básicos no transmiten, solo reciben el streaming
             }
-            
         } catch (error: any) {
-            console.log('There was an error connecting to the room:', error?.error?.errorMessage || error?.message || error);
+            console.log('Error al conectar con la sala:', error);
             await this.leaveRoom();
         }
     }
 
-    async leaveRoom() {
-        // Leave the room by calling 'disconnect' method over the Room object
+    async leaveRoom(): Promise<void> {
         await this.room()?.disconnect();
-
-        // Reset all variables
         this.room.set(undefined);
         this.localTrack.set(undefined);
         this.remoteTracksMap.set(new Map());
     }
 
-    @HostListener('window:beforeunload')
-    async ngOnDestroy() {
-        // On window closed or component destroyed, leave the room
-        await this.leaveRoom();
-    }
-
-    /**
-     * --------------------------------------------
-     * GETTING A TOKEN FROM YOUR APPLICATION SERVER
-     * --------------------------------------------
-     * The method below request the creation of a token to
-     * your application server. This prevents the need to expose
-     * your LiveKit API key and secret to the client side.
-     *
-     * In this sample code, there is no user control at all. Anybody could
-     * access your application server endpoints. In a real production
-     * environment, your application server must identify the user to allow
-     * access to the endpoints.
-     */
     async getToken(roomName: string, participantName: string): Promise<string> {
         const response = await lastValueFrom(
-            this.httpClient.post<{ token: string }>(APPLICATION_SERVER_URL + 'token', { roomName, participantName })
+            this.httpClient.post<{ token: string }>('http://localhost:3000/token', { roomName, participantName })
         );
         return response.token;
     }
 
-    handleAlert(alert: { message: string, to: string }) {
-        // Procesa la alerta solo si el destinatario es 'MainCamera' y este componente es la cámara principal
-        if (this.isMainCamera && alert.to === 'MainCamera') {
-            console.log('Alerta recibida en la cámara principal:', alert.message);
-            // Aquí puedes agregar lógica adicional para manejar las alertas, como mostrar una notificación
-        }
+    @HostListener('window:beforeunload')
+    async ngOnDestroy(): Promise<void> {
+        await this.leaveRoom();
     }
 }

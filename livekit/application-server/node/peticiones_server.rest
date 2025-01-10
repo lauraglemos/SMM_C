@@ -1,0 +1,66 @@
+### Registrar un usuario basico
+POST http://localhost:6080/register
+Content-Type: application/json
+
+{
+  "username": "nuevo_usuario_5",
+  "password": "mi_password_segura_5",
+  "adminKey": "1234",
+  "rol":"basico"
+}
+
+
+### Registrar un usuario administrador
+POST http://localhost:3000/register
+Content-Type: application/json
+
+{
+  "username": "admin_user",
+  "password": "admin_password_segura",
+  "adminKey": "1234",
+  "rol": "administrador"
+}
+
+
+### Iniciar sesión 
+POST http://localhost:3000/login
+Content-Type: application/json
+
+{
+  "username": "nuevo_usuario",
+  "password": "mi_password_segura"
+}
+
+
+### Cambiar la contraseña de administrador
+POST http://localhost:3000/change-admin-password
+Content-Type: application/json
+
+{
+  "username": "admin_user",
+  "password": "admin_password_segura",
+  "newAdminPassword": "1234"
+}
+
+
+### Registrar una alerta manual
+POST http://localhost:3000/add-alert
+Content-Type: application/json
+
+{
+  "event": "Movimiento sospechoso detectado"
+}
+
+
+### Obtener el historial de alertas
+GET http://localhost:3000/history
+
+
+### Emitir un audio preconfigurado
+POST http://localhost:3000/broadcast-audio/perro
+
+
+
+
+
+
